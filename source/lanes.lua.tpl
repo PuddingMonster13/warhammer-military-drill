@@ -1062,7 +1062,8 @@ local function send_stations(s, lanes, wait)
 			local x, z = base and base[1], base and base[3]
 			if base and lanes then x, z = place_of(lanes, x, z, key) end
 			-- back at the closing a crewman goes to its place beside its machine, where that machine stands now, found through
-			-- its own carrier now (the noted places are stale when a machine was pushed). No job when its machine is another
+			-- its own carrier now (the noted places are stale when a machine was pushed; a noted machine pointer may be stale
+			-- too). No job when its machine is another
 			-- one, is unreadable, or the place is not near the unit: the game's own places hold then
 			if base and not lanes and s.crewed then
 				local now = mr.read_pointer(model, 0x2e0)
@@ -1247,7 +1248,8 @@ local function make_room(s, w, lanes, own_places)
 	project(own_places or near_places(s), own)
 	local wide = 0
 	for _, o in ipairs(state.units) do
-		-- (and not a standing unit the same walker passes through: it lies along its way, not beside)
+		-- (and not a standing unit the same walker passes through: it lies along its way, not beside - run 34: the 2nd unit
+		-- of a row took the 1st one, already stepped aside, for a wall and closed up to 50 %)
 		if o ~= s and o ~= w and not o.gone and not (o.walks and passing(o, s)) and not (o.stands and w.walks and w.dx and passing(w, o))
 			and o.x and s.x and math.sqrt((o.x - s.x) ^ 2 + (o.z - s.z) ^ 2) < s.half + (o.half or 0) + 25 then
 			-- one unit that cannot be read must not spoil the whole check (run 18: "not readable" with neighbours)
@@ -1581,7 +1583,8 @@ local function start_columns(s, w, lanes, radius, gap)
 	local squeeze = math.max(0, math.min(0.5, (lanes[6] - 2 * radius) / q))
 	local outer = (lanes[7] - 0.5) * q -- the centre of the outermost lane
 	local step = math.max(q / 2, w.half - outer) -- the widest sideways step of a walker model into its lane
-	-- the walker starts forming its columns together with the split (not earlier: run 14): from where its front is now
+	-- the walker starts forming its columns together with the split (not earlier: run 14, the walker's formation changed
+	-- before the standing unit split): from where its front is now
 	local t0 = lo - math.max(COLUMN_LEAD, gap or (COLUMN_LEAD + w.speed * SPLIT_MARGIN + step))
 	local t1 = hi + COLUMN_POST
 	put_float(w.at + EW.OX, ox)
@@ -2085,7 +2088,7 @@ local function log_columns(s)
 	end
 	if inside * 3 < total then return false end -- not yet a third of the walker inside the standing unit
 	-- where the middle of the walker is across the lanes, and how wide each lane is now (from where the standing models
-	-- stand): run 18
+	-- stand): run 18, the walker always took the LEFT lane
 	local wsum, wn = 0, 0
 	for _, p in pairs(near_places(w)) do
 		wsum, wn = wsum + (p[1] - ox) * lanes[3] + (p[3] - oz) * lanes[4], wn + 1
@@ -2248,8 +2251,8 @@ local function open_for(s, cands)
 	-- into 34 m of stormvermin 2.4 s after the opening, the split took 6.4 s): no lanes, the game's own way. It is left
 	-- out until it is past or gets a new order (serve), so a unit following it still gets lanes and it is not planned for
 	-- on every look (the width after the merges counts too, as in try_widen) (only when the contact comes before
-	-- TUNE.LATE_SHARE of the split - bloodcrushers 5.0 s into a split of 8.3 s were refused by the old rule pushed through
-	-- as vanilla)
+	-- TUNE.LATE_SHARE of the split - bloodcrushers 5.0 s into a split of 8.3 s were refused by the old rule and then pushed
+	-- through as vanilla)
 	if (lanes.whole_front or (not own and lanes[8] ~= 0 and s.half and lanes[6] >= 2 * s.half)) and raw[2] < TUNE.LATE_SHARE * raw[3] then
 		s.late = s.late or {}
 		local lw = raw[4]
@@ -2398,7 +2401,8 @@ local function force_closed(s)
 	s.walker_seen, s.widened_for, s.widen_said, s.served, s.parked, s.crew_moved, s.crew_post = nil, nil, nil, nil, nil, nil, nil
 end
 
--- (log) a friendly walker whose middle is inside a unit that has no lanes open (and the log said nothing about it):
+-- (log) a friendly walker whose middle is inside a unit that has no lanes open (run 36: an allied army was not passed
+-- through, and the log said nothing about it):
 -- once per pair and MISSED_KEEP looks, with the reason
 function diag.missed()
 	diag.run = (diag.run or 0) + 1
