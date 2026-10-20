@@ -1,0 +1,16 @@
+# built packs and scripts, test outputs
+*.pack
+out/
+build*/
+*.txt
+!requirements.txt
+
+# game data the build reads from the installed game (cached per game build) - not ours to publish
+cache/
+
+# logs and crash dumps
+*.log
+*.mdmp
+
+__pycache__/
+*.pyc

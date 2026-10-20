@@ -1,0 +1,6 @@
+capstone
+pefile
+lupa
+Pillow
+zstandard
+lz4
