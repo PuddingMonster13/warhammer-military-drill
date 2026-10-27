@@ -7,6 +7,8 @@
                                                (full log units_lanes_log.txt, CREW / MISSED diagnostics) and its script
     python lanes.py build <out_dir> --release  the same checks, then writes the RELEASE pack military_drill.pack (no
                                                log file; problems only in the game's lua_mod_log.txt) and its script
+    python lanes.py build <out_dir> --narrow-off  the TEST build with TUNE.NARROW = false (085h comparison: big walkers
+                                               take the ordinary lanes / columns path); not with --release
 
 What it does: a STANDING unit that a friendly MOVING unit is about to walk through opens lanes: its models are
 sent to places shifted sideways in blocks, so that empty lanes appear between the blocks; when the other unit has
@@ -28,6 +30,9 @@ The game only hands places out when it notices models out of place, so three cav
                                                  towards the walker's line (S0) so that it does not push into a
                                                  unit standing next to it
     It also shortens the random wait the game gives every model before it starts to walk.
+    085i: before the formula the cave looks the model up in the unit's table of places (E_PLACES, E_NPLACES records of
+    16 bytes: model pointer, x, z; at most 256): a hit puts that x / z into the copy (script-computed layout of the
+    blocks: extra ranks); no record, no table or more than 256 records = the formula above (counters PLACE_HIT / PLACE_MISS).
   cave 2 "recheck" (0x32711ca, the 5 s test of C, rbx = C): when the script marked the unit ("dirty"), the places
     are handed out again at once instead of up to 5 s later.
   cave 3 "station" (0x3070ec0, in the model's own tick, rdi = the model): the battle script leaves "jobs" (model,
@@ -42,6 +47,9 @@ The game only hands places out when it notices models out of place, so three cav
         s = (x - ox) * ax + (z - oz) * az        across; k = round(s / Q - 0.5) limited to kl .. kh
         c = (k + 0.5) * Q                         the middle of lane k (Q = block + lane)
         s' = c + (s - c) * q                      files of the strip squeezed into the lane
+  cave 5 "ghost_pass" (0.85e; the per-entity collision pass, r15 = entity A, r14 = entity B, just before the pair test): two entities
+    of the same alliance but of DIFFERENT units, one of them in the script's ghost list (ethereal units), are not tested at all: no push in
+    either direction, no "blocked" byte. Everything else (enemies, the same unit, units not listed) runs as ever.
 Addresses in this file are those of the build the analysis was made on (2026-10-12). Since build 25961564
 (2026-10-19) the code is found by byte patterns (sites.py), in this script and in the battle script; the checks
 below read the routines found that way, addressed as in the analysed build (sites.View).
@@ -62,7 +70,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from wh3tools import nasm  # new cave code is written as NASM source (2026-10-19)
 from probe import d32, HEAD
 
-VERSION = '0.8'
+VERSION = '0.85'
 PACK = '!units_lanes_debug.pack'
 SCRIPT = 'units_lanes.lua'
 BATTLE_PATH = 'script/battle/mod/' + SCRIPT
@@ -115,25 +123,44 @@ CARROTS = 0x50  # cave 4 moved a point into a lane
 CARROT_SEEN = 0x58  # cave 4 saw a marching point of a listed unit
 HALF = 0x60  # the float 0.5 (written by the script)
 CARROTS_NEG = 0x70  # cave 4 pulled a point into a lane with k < 0 (run 20: which side do the walkers' points go to?)
+PLACE_HIT = 0x74  # cave 1 handed a model its place from the unit's table (085i)
+PLACE_MISS = 0x78  # cave 1 found no entry for a model of a unit that has a table: the old formula
 LIST = 0x80  # entries, ended by Unit* = 0
-ENTRY = 0xf8
+ENTRY = 0x108
 # entry: +0 Unit*, lane numbers, +0x30 the shifted copy, +0x60 the template, then kind of C, template counter, jobs
 E_OX, E_OZ, E_AX, E_AZ, E_P, E_L, E_N, E_DIRTY, E_WAIT, E_BIAS, E_COPY = 0x08, 0x0c, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x24, 0x28, 0x2c, 0x30
 E_TPL, E_C5C, E_C63, E_SEQ, E_PENDING, E_JOBS, E_NJOBS = 0x60, 0x90, 0x94, 0x98, 0x9c, 0xa0, 0xa8
 # the same unit as a WALKER (cave 4): Q = 0 means off
 E_WQ, E_WOX, E_WOZ, E_WAX, E_WAZ, E_WBX, E_WBZ, E_WT0, E_WT1, E_WC, E_WKL, E_WKH = 0xb0, 0xb4, 0xb8, 0xbc, 0xc0, 0xc4, 0xc8, 0xcc, 0xd0, 0xd4, 0xd8, 0xdc
 E_WSL, E_WSH = 0xe0, 0xe4  # across the way: points outside the standing unit (after its blocks stepped aside) are free
+MAX_UNITS = 120
 E_G, E_S0 = 0xe8, 0xec  # cave 1: closing up (G <= 0) around the walker's line S0 (room left for the neighbours)
 E_WLAG, E_WMIN = 0xf0, 0xf4  # cave 4: a point pulled d sideways also comes LAG * |d| nearer (not under MIN ahead)
-MAX_UNITS = 120
+E_PLACES, E_NPLACES = 0xf8, 0x100  # cave 1 (085i): the unit's table of places (pointer, E_NPLACES records of PLACE_REC bytes: model pointer, x, z); 0 records = off
+PLACE_REC, PLACE_CAP = 16, 256  # a record; the cave looks at 256 records at most (more than that counts as no table)
+PLACE_POOL_SIZE = MAX_UNITS * PLACE_CAP * PLACE_REC
 TABLE_SIZE = 0x8000
 # quick ways out: cave 3 runs in every model's tick and cave 4 in every marching call of the battle; while nothing is to
 # do, they leave after one compare instead of searching the list of units
 WALKERS = 0x64  # how many walkers have their columns on (written by the script); cave 4 does nothing while 0
 JOBS_ANY = 0x6c  # 1 while the script has left jobs (written by the script); cave 3 does nothing while 0
 JOB, JOB_RECORD, CAP = 0x40, 0x08, 256  # a job: +0 model (0 = taken), +8 the station record (0x38 bytes); CAP jobs per unit
-POOL_SIZE = MAX_UNITS * CAP * JOB
-assert LIST + ENTRY * (MAX_UNITS + 1) <= TABLE_SIZE and E_COPY + REC_SIZE == E_TPL and E_TPL + REC_SIZE == E_C5C and E_WMIN + 4 == ENTRY
+POOL_SIZE = MAX_UNITS * CAP * JOB + PLACE_POOL_SIZE  # 085i: the jobs, then the per-model place tables (the script: pool + MAX_UNITS * CAP * JOB)
+# cave 5 (ghost_pass), after the entry list (which ends at 0x7d48)
+GHOSTS = 0x7d80  # dword: how many Unit* of the ghost list count (written by the script; 0 = the cave does nothing)
+GHOST_SKIPS = 0x7d88  # dword: pairs skipped (the script reads and resets it)
+GHOST_TO = 0x7d90  # qword: absolute address the cave jumps to for a skipped pair (written by the script: the site + GHOST_SKIP_OFF)
+GHOST_LIST = 0x7da0  # GHOST_MAX x Unit* (qword)
+GHOST_MAX = 32
+GHOST_SKIP_OFF = 0x43  # the skip target (the end of the `call [B.vtable + 0xb8]`) from the site; checked against the `jne` in signatures()
+ALLIANCE, ENTITY_UNIT = 0x80, 0x2e8  # entity: alliance pointer (two entities are friends when equal), the Unit
+assert GHOSTS >= LIST + ENTRY * (MAX_UNITS + 1) and GHOST_LIST + 8 * GHOST_MAX <= TABLE_SIZE and GHOST_SKIPS == GHOSTS + 8 and GHOST_TO == GHOSTS + 0x10
+# the header fields 0x00 - 0x7f of the table must not overlap (085i review: a qword at 0x68 once ate JOBS_ANY at 0x6c)
+_HEADER = [(ENABLE, 4), (COUNT, 4), (REACHED, 4), (HUNG, 4), (CHECKS, 4), (FORCED, 4), (SET_STATION, 8), (POOL, 8), (JOBS_DONE, 4), (CARROT_RET, 8), (CARROTS, 4), (CARROT_SEEN, 4),
+           (HALF, 4), (WALKERS, 4), (JOBS_ANY, 4), (CARROTS_NEG, 4), (PLACE_HIT, 4), (PLACE_MISS, 4)]
+_SPANS = sorted(_HEADER)
+assert all(a + n <= b for (a, n), (b, _) in zip(_SPANS, _SPANS[1:])) and _SPANS[-1][0] + _SPANS[-1][1] <= LIST, 'header fields overlap'
+assert LIST + ENTRY * (MAX_UNITS + 1) <= TABLE_SIZE and E_COPY + REC_SIZE == E_TPL and E_TPL + REC_SIZE == E_C5C and E_NPLACES + 8 == ENTRY
 
 
 def find_unit(a):
@@ -150,6 +177,51 @@ def find_unit(a):
     a.emit(b'\x49\x81\xC2' + d32(ENTRY))  # add r10, ENTRY
     a.jump(0xEB, 'loop')
     a.label('found')
+
+
+# cave 1 (085i): the per-model place table of the unit (r10 = its entry, r12 = the model, rax = the table). Leaves rdx = the record of the model in the
+# table, or 0 (no table, too many records, no record for this model: counted as a miss when the unit has a table). The loop is bounded by PLACE_CAP.
+PLACE_LOOKUP_SOURCE = '''
+    xor edx, edx
+    mov r8, [r10+E_PLACES]
+    test r8, r8
+    jz place_none
+    mov ecx, [r10+E_NPLACES]
+    test ecx, ecx
+    jz place_none
+    cmp ecx, PLACE_CAP
+    ja place_none
+place_scan:
+    cmp [r8], r12
+    je place_found
+    add r8, PLACE_REC
+    dec ecx
+    jnz place_scan
+    lock inc dword [rax+PLACE_MISS]
+    jmp place_none
+place_found:
+    mov rdx, r8
+place_none:
+'''
+PLACE_LOOKUP_CODE = nasm.assemble(PLACE_LOOKUP_SOURCE, {'E_PLACES': E_PLACES, 'E_NPLACES': E_NPLACES, 'PLACE_CAP': PLACE_CAP, 'PLACE_REC': PLACE_REC, 'PLACE_MISS': PLACE_MISS})
+
+# the hit: the record of the model in the copy, x and z from the table (rdx = the record)
+PLACE_HIT_SOURCE = '''
+    movups xmm0, [r13]
+    movups [r10+E_COPY], xmm0
+    movups xmm0, [r13+0x10]
+    movups [r10+E_COPY+0x10], xmm0
+    movups xmm0, [r13+0x20]
+    movups [r10+E_COPY+0x20], xmm0
+    mov ecx, [rdx+8]
+    mov [r10+E_COPY+REC_X], ecx
+    mov ecx, [rdx+12]
+    mov [r10+E_COPY+REC_Z], ecx
+    lea r13, [r10+E_COPY]
+    lock inc dword [rax+PLACE_HIT]
+    lock inc dword [rax+COUNT]
+'''
+PLACE_HIT_CODE = nasm.assemble(PLACE_HIT_SOURCE, {'E_COPY': E_COPY, 'REC_X': REC_X, 'REC_Z': REC_Z, 'PLACE_HIT': PLACE_HIT, 'COUNT': COUNT})
 
 
 def cave_place():
@@ -182,6 +254,9 @@ def cave_place():
     a.jump(0x76, 'waited')  # jbe: the game's wait is already that short
     a.emit(b'\x89\x4C\x24' + bytes([WAIT_ARG]))  # mov [rsp+0x28], ecx
     a.label('waited')
+    a.emit(PLACE_LOOKUP_CODE)  # 085i: rdx = the model's record in the unit's table of places, or 0 (NASM source above)
+    a.emit(b'\x48\x85\xD2')  # test rdx, rdx
+    a.far(0x85, 'table_hit')  # jne: the table names this model's place
     a.emit(b'\xF3\x41\x0F\x10\x4D' + bytes([REC_X]))  # movss xmm1, [r13+x]
     a.emit(b'\xF3\x41\x0F\x5C\x4A' + bytes([E_OX]))  # subss xmm1, [r10+ox]
     a.emit(b'\xF3\x41\x0F\x10\x55' + bytes([REC_Z]))  # movss xmm2, [r13+z]
@@ -221,6 +296,9 @@ def cave_place():
     a.jump(0xEB, 'done')
     a.label('hung')
     a.lock_inc(HUNG)
+    a.jump(0xEB, 'done')
+    a.label('table_hit')
+    a.emit(PLACE_HIT_CODE)  # the copy with x and z from the table (NASM source above)
     a.label('done')
     return a.done()
 
@@ -415,7 +493,51 @@ lane_k_not_negative:
 SIDE_CODE = nasm.assemble(SIDE_SOURCE, {'CARROTS_NEG': CARROTS_NEG})
 
 
-CAVES = [('place_send', cave_place()), ('recheck', cave_recheck()), ('station', cave_station()), ('walk_to', cave_carrot())]
+# cave 5 "ghost_pass": at the start of the call setup of the pair test in 0x316ff04: r15 = entity A, r14 = entity B (both after the 0x200000
+# redirect), rax = the table (set by the cave head). Free: rax, rcx, rdx, r8, r9, r10, r11, flags (the replaced instructions set them all before
+# the call). A pair of the same alliance and of different units (both entities with a unit) of which one unit is in the ghost list: skipped to
+# the end of the pair handler (no touch test, no push, no blocked byte). Each pair is visited once per pass, so "either listed" holds both ways.
+GHOST_SOURCE = '''
+    mov ecx, [rax+GHOSTS]
+    test ecx, ecx
+    jz ghost_done                  ; the list is empty (the script wrote 0)
+    cmp ecx, GHOST_MAX
+    ja ghost_done                  ; not a count the cave knows
+    mov rdx, [r15+ALLIANCE]
+    cmp rdx, [r14+ALLIANCE]
+    jne ghost_done                 ; enemies: as ever
+    mov rdx, [r15+ENTITY_UNIT]     ; A's unit
+    mov r8, [r14+ENTITY_UNIT]      ; B's unit
+    test rdx, rdx
+    jz ghost_done
+    test r8, r8
+    jz ghost_done
+    cmp rdx, r8
+    je ghost_done                  ; the same unit: as ever
+    lea r9, [rax+GHOST_LIST]
+ghost_scan:
+    mov r10, [r9]
+    cmp r10, rdx
+    je ghost_skip
+    cmp r10, r8
+    je ghost_skip
+    add r9, 8
+    dec ecx
+    jnz ghost_scan
+    jmp ghost_done
+ghost_skip:
+    lock inc dword [rax+GHOST_SKIPS]
+    jmp [rax+GHOST_TO]             ; past the pair test and the handler
+ghost_done:
+'''
+
+
+def cave_ghost():
+    return nasm.assemble(GHOST_SOURCE, {'GHOSTS': GHOSTS, 'GHOST_MAX': GHOST_MAX, 'ALLIANCE': ALLIANCE, 'ENTITY_UNIT': ENTITY_UNIT, 'GHOST_LIST': GHOST_LIST,
+                                        'GHOST_SKIPS': GHOST_SKIPS, 'GHOST_TO': GHOST_TO})
+
+
+CAVES = [('place_send', cave_place()), ('recheck', cave_recheck()), ('station', cave_station()), ('walk_to', cave_carrot()), ('ghost_pass', cave_ghost())]
 SITES = []  # (name, rva in the installed exe, cave, None, 'inner'), filled by locate()
 FOUND = {}  # name -> rva in the installed exe (cave sites and set_station), filled by locate()
 
@@ -423,7 +545,7 @@ FOUND = {}  # name -> rva in the installed exe (cave sites and set_station), fil
 def locate(x):
     """Finds the cave sites and the station routine in the installed exe by pattern (each must match once)."""
     FOUND.clear()
-    for name in ('place_send', 'recheck', 'station', 'set_station', 'walk_to', 'carrot_ret'):
+    for name in ('place_send', 'recheck', 'station', 'set_station', 'walk_to', 'carrot_ret', 'ghost_pass'):
         FOUND[name] = sites.find(x, name)
     SITES[:] = [(name, FOUND[name], cave, None, 'entry' if name == 'walk_to' else 'inner') for name, cave in CAVES]
     return FOUND
@@ -443,13 +565,24 @@ def signatures(x):
               'recheck': ['movss xmm0, dword ptr [rbx + 0x88]', 'addss xmm0, dword ptr [rip + ADDR]', 'mulss xmm1, dword ptr [rip + ADDR]',
                           'comiss xmm1, xmm0'],
               'station': ['cmp byte ptr [rdi + 0x88a], r15b', 'jne 0x%x' % tick.new(0x3071114)],
-              'walk_to': ['mov qword ptr [rsp + 8], rbx', 'mov qword ptr [rsp + 0x10], rsi', 'push rdi']}
+              'walk_to': ['mov qword ptr [rsp + 8], rbx', 'mov qword ptr [rsp + 0x10], rsi', 'push rdi'],
+              'ghost_pass': ['mov rax, qword ptr [rdi + 0x58]', 'mov r9, r15', 'mov qword ptr [rsp + 0x30], r14', 'mov r8, r12', 'mov rdx, rbx',
+                             'mov rcx, qword ptr [rax + 0x430]']}
     # cave 4: the marching call hands walk_to a target in its own stack frame, so changing it changes nothing else
     ret = FOUND['carrot_ret']
     assert sites.call_target(x, ret - 5) == FOUND['walk_to'], 'the marching call goes to walk_to'
     assert bytes(x.read(ret - 12, 7)) == bytes.fromhex('488d55cf' '8945cb'), 'lea rdx, [rbp-0x31] / mov [rbp-0x35], eax right before it'
     walk = sites.View(x, FOUND['walk_to'], FOUND['walk_to'], None)
     assert walk[FOUND['walk_to'] + 0x12] == 'mov rsi, rdx' and walk[FOUND['walk_to'] + 0x15] == 'mov rbx, rcx', 'walk_to keeps rcx / rdx: they are its arguments'
+    # cave 5: the pair test of the collision pass. The `jne` after the pair routine skips the handler: its target is the end of the vcall
+    # (GHOST_SKIP_OFF from the site), where the loop goes on with the next entity; the pair routine is a function of its own
+    ghost = FOUND['ghost_pass']
+    assert bytes(x.read(ghost + 0x32, 2)) == bytes.fromhex('750f') and ghost + 0x34 + 0x0f == ghost + GHOST_SKIP_OFF, 'the jne after the pair routine skips to the end of the handler call'
+    assert bytes(x.read(ghost + GHOST_SKIP_OFF, 4)) == bytes.fromhex('488b55c8'), 'the skip target reloads rdx from the loop frame'
+    assert bytes(x.read(ghost + 0x3d, 2)) == bytes.fromhex('ff90'), 'the handler is call [B.vtable + 0xb8]'
+    pair = sites.call_target(x, ghost + 0x2b)
+    assert x.func(pair) and x.func(pair)[0] == pair, 'the pair routine is a function'
+    assert x.func(ghost)[0] < ghost < x.func(ghost)[1], 'the site lies in the collision pass'
     probe.signatures(x, SITES, expect)
     sigs = [sites.expect_bytes(x, rva) for name, rva, tail, leave, kind in SITES]
     # the routine that hands out the places: rbx = C, the loop takes model and record of the same index
@@ -519,18 +652,20 @@ def at(base, off):
 
 
 WRITES = {
-    'place_send': ([at(('dword', 'rax'), o) for o in (COUNT, REACHED, HUNG)] + [at(('xmmword', 'r10'), E_TPL + p) for p in (0, 0x10, 0x20)]
+    'place_send': ([at(('dword', 'rax'), o) for o in (COUNT, REACHED, HUNG, PLACE_HIT, PLACE_MISS)] + [at(('dword', 'r10'), E_COPY + REC_X), at(('dword', 'r10'), E_COPY + REC_Z)] + [at(('xmmword', 'r10'), E_TPL + p) for p in (0, 0x10, 0x20)]
                    + [at(('xmmword', 'r10'), E_COPY + p) for p in (0, 0x10, 0x20)]
                    + [at(('dword', 'r10'), o) for o in (E_C5C, E_C63, E_SEQ)] + ['dword ptr [rsp + 0x28]', 'dword ptr [r13]', 'dword ptr [r13 + 8]']),
     'recheck': [at(('dword', 'rax'), o) for o in (CHECKS, FORCED)] + [at(('dword', 'r10'), E_DIRTY), 'dword ptr [rbx + 0x88]'],
     'station': [at(('dword', 'rax'), JOBS_DONE), at(('dword', 'r10'), E_PENDING), 'qword ptr [rdx]'],
     'walk_to': [at(('dword', 'rax'), o) for o in (CARROTS, CARROT_SEEN, CARROTS_NEG)] + ['dword ptr [rdx]', 'dword ptr [rdx + 8]'],
+    'ghost_pass': [at(('dword', 'rax'), GHOST_SKIPS)],
 }
 REGISTERS = {
-    'place_send': ('rax', 'rcx', 'ecx', 'r10', 'r11', 'r11d', 'r13', 'xmm0', 'xmm1', 'xmm2', 'xmm4'),
+    'place_send': ('rax', 'rcx', 'ecx', 'edx', 'rdx', 'r8', 'r10', 'r11', 'r11d', 'r13', 'xmm0', 'xmm1', 'xmm2', 'xmm4'),
     'recheck': ('rax', 'rcx', 'r10', 'r11'),
     'station': ('rax', 'rcx', 'ecx', 'rdx', 'r10', 'r11'),
     'walk_to': ('rax', 'r10', 'r11', 'r11d', 'xmm0', 'xmm1', 'xmm2', 'xmm4', 'xmm5'),  # keeps rcx / rdx / r8 / r9 (arguments)
+    'ghost_pass': ('rax', 'rcx', 'ecx', 'rdx', 'r8', 'r9', 'r10'),  # (never r14 / r15 / rdi / rbx / r12 / r13 / rbp / rsp: the replaced code and the loop use them)
 }
 
 
@@ -544,11 +679,14 @@ def check_decode(x):
             line = '%s %s' % (ins.mnemonic, ins.op_str)
             assert ins.mnemonic in ('movabs', 'cmp', 'je', 'jne', 'jbe', 'jb', 'ja', 'jle', 'jge', 'jmp', 'mov', 'movzx', 'test', 'lea', 'add',
                                     'movss', 'xorps', 'ucomiss', 'comiss', 'subss', 'mulss', 'addss', 'divss', 'cvtss2si', 'cvtsi2ss', 'cmovg',
-                                    'cmovl', 'neg', 'movaps', 'movups', 'lock inc', 'lock dec', 'inc', 'dec', 'call', 'maxss', 'minss', 'jns'), line
+                                    'cmovl', 'neg', 'movaps', 'movups', 'lock inc', 'lock dec', 'inc', 'dec', 'call', 'maxss', 'minss', 'jns', 'xor'), line
             assert 'xmm3' not in line, line  # an argument of the call after cave 1
             assert 'xmm5' not in line or name == 'walk_to', line
             if name not in ('place_send', 'walk_to'):
                 assert 'xmm' not in line, line
+            if ins.mnemonic == 'jmp' and '[' in ins.op_str:  # cave 5: the one jump out, to the address the script wrote (past the pair handler)
+                assert name == 'ghost_pass' and ins.op_str == 'qword ptr [rax + 0x%x]' % GHOST_TO, line
+                continue
             if ins.mnemonic.startswith('j'):
                 assert 0 <= int(ins.op_str, 16) <= len(code), 'jump out of the cave'
                 continue
@@ -600,6 +738,7 @@ def native_test():
     record = (ctypes.c_ubyte * 0x30)()
     waited = ctypes.c_uint32()
     checks = 0
+    keep = []  # (the place tables of the cases stay alive)
     FILL = (0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777, 0x88888888, 0x99999999)
 
     def fill(enable, entries):
@@ -611,8 +750,16 @@ def native_test():
             if len(e) > 9:
                 struct.pack_into('<2f', table, LIST + ENTRY * i + E_G, e[9], e[10])
 
-    def go(enable, entries, unit, x, z, hung=0, wait=15):
+    def go(enable, entries, unit, x, z, hung=0, wait=15, places=None, nplaces=None, places_on=None):
         fill(enable, entries)
+        if places is not None:  # 085i: the table of places of the unit (places_on: the unit that has it, default the model's): records (model, x, z)
+            on = [en[0] for en in entries].index(places_on if places_on is not None else unit)
+            ptab = (ctypes.c_ubyte * max(16, PLACE_REC * len(places)))()
+            for i, (pm, px, pz) in enumerate(places):
+                struct.pack_into('<Qff', ptab, PLACE_REC * i, pm, px, pz)
+            keep.append(ptab)
+            struct.pack_into('<Q', table, LIST + ENTRY * on + E_PLACES, ctypes.addressof(ptab) if nplaces != 'null' else 0)
+            struct.pack_into('<I', table, LIST + ENTRY * on + E_NPLACES, len(places) if nplaces in (None, 'null') else nplaces)
         struct.pack_into('<Q', model, UNIT, unit)
         struct.pack_into('<3f9I', record, 0, x, 7.25, z, *FILL)
         struct.pack_into('<Q', record, REC_OBJECT, hung)
@@ -636,6 +783,7 @@ def native_test():
             assert got[4:8] == before[4:8] and got[12:] == before[12:], 'only x and z may differ'
         nx, y, nz = struct.unpack_from('<3f', got, 0)
         assert bytes(table[TABLE_SIZE:]) == bytes(0x40)
+        go.table = struct.unpack_from('<II', table, PLACE_HIT)[0], struct.unpack_from('<I', table, PLACE_MISS)[0]  # (hits, misses of this call)
         return round(nx, 3), round(nz, 3), struct.unpack_from('<I', table, COUNT)[0], waited.value, struct.unpack_from('<I', table, HUNG)[0]
 
     e = [(U2, 0.0, 0.0, 1.0, 0.0, 9.0, 0.0, 9), (U1, 100.0, 50.0, 1.0, 0.0, 4.0, 1.8, 2)]  # U2: closed; U1: lanes across x
@@ -682,6 +830,26 @@ def native_test():
     full = [(0x9000000 + i, 0, 0, 1, 0, 4, 1, 1) for i in range(MAX_UNITS - 1)] + [(U1, 100.0, 50.0, 1.0, 0.0, 4.0, 1.8, 2)]
     assert go(1, full, U1, 104.0, 50.0) == (105.8, 50.0, 1, 5, 0)  # the last entry of a full list
     checks += 5
+
+    # cave 1, 085i: the per-model table of places (hit = the table's x / z; miss = the old formula; empty / no / absurd table = the old formula; bounded loop)
+    me1 = ctypes.addressof(model)
+    others = [(0x111, 1.0, 2.0), (0x222, 3.0, 4.0)]
+    assert go(1, e, U1, 106.5, 50.0, places=others + [(me1, 500.0, 700.0)]) == (500.0, 700.0, 1, 5, 0) and go.table == (1, 0)  # hit: x / z from the table, counted as shifted
+    assert go(1, e, U1, 106.5, 50.0, places=[(me1, 500.0, 700.0)] + others) == (500.0, 700.0, 1, 5, 0) and go.table == (1, 0)  # the first record
+    assert go(1, e, U1, 106.5, 50.0, places=others) == (110.1, 50.0, 1, 5, 0) and go.table == (0, 1)  # miss: the old formula, counted
+    assert go(1, e, U1, 106.5, 50.0, places=[(me1, 500.0, 700.0)], nplaces=0) == (110.1, 50.0, 1, 5, 0) and go.table == (0, 0)  # empty table
+    assert go(1, e, U1, 106.5, 50.0, places=[(me1, 500.0, 700.0)], nplaces='null') == (110.1, 50.0, 1, 5, 0) and go.table == (0, 0)  # records but no pointer
+    assert go(1, e, U1, 106.5, 50.0) == (110.1, 50.0, 1, 5, 0) and go.table == (0, 0)  # no table at all
+    far = [(0x1000 + i, 1.0, 2.0) for i in range(PLACE_CAP - 1)]
+    assert go(1, e, U1, 106.5, 50.0, places=far + [(me1, 500.0, 700.0)]) == (500.0, 700.0, 1, 5, 0) and go.table == (1, 0)  # the last record that counts (256th)
+    assert go(1, e, U1, 106.5, 50.0, places=far + [(0x1, 0.0, 0.0), (me1, 500.0, 700.0)], nplaces=PLACE_CAP) == (110.1, 50.0, 1, 5, 0) and go.table == (0, 1)  # a record beyond the count: not looked at
+    assert go(1, e, U1, 106.5, 50.0, places=far + [(0x1, 0.0, 0.0), (me1, 500.0, 700.0)]) == (110.1, 50.0, 1, 5, 0) and go.table == (0, 0)  # 257 records: more than the cave knows = no table
+    assert go(1, e, U1, 106.5, 50.0, places=[(me1, 500.0, 700.0)], places_on=U2) == (110.1, 50.0, 1, 5, 0) and go.table == (0, 0)  # the table belongs to another unit
+    assert go(1, e, U2, 120.0, 50.0, places=[(me1, 500.0, 700.0)]) == (120.0, 50.0, 0, 15, 0) and go.table == (0, 0)  # lanes closed (L = 0): the table is not read
+    assert go(0, e, U1, 106.5, 50.0, places=[(me1, 500.0, 700.0)]) == (106.5, 50.0, 0, 15, 0) and go.table == (0, 0)  # switched off
+    assert go(1, e, U1, 106.5, 50.0, hung=0x1234, places=[(me1, 500.0, 700.0)]) == (106.5, 50.0, 0, 15, 1) and go.table == (0, 0)  # a place on an object is left alone
+    assert go(1, e, U1, 106.5, 50.0, wait=3, places=[(me1, 500.0, 700.0)]) == (500.0, 700.0, 1, 3, 0)  # the wait is shortened as before
+    checks += 13 * 2
 
     # cave 2
     group = (ctypes.c_ubyte * 0x40)()
@@ -830,18 +998,70 @@ def native_test():
     assert walk(1, U1, 101.0, 50.0, lag=10.0, at=(101.0, 49.5)) == (102.125, 50.0, 1, 1)
     assert walk(1, U1, 99.0, 55.0, lag=0.5, at=(99.0, 51.0)) == (97.875, 54.438, 1, 1)  # pulled the other way: |d|
     checks += 23
+
+    # cave 5 (ghost_pass): g5(rcx -> r15 = entity A, rdx -> r14 = entity B) returns 0 when the replaced instructions would run (the cave fell
+    # through) and 1 when the cave jumped to the address in GHOST_TO (a skipped pair); r14 / r15 are kept
+    mem5 = k32.VirtualAlloc(None, 0x1000, 0x3000, 0x40)
+    pre5 = bytes.fromhex('4156' '4157' '4989cf' '4989d6')  # push r14 / push r15 / mov r15, rcx / mov r14, rdx
+    body5 = HEAD + struct.pack('<Q', tbl) + CAVES[4][1]
+    fall5 = bytes.fromhex('31c0' '415f' '415e' 'c3')  # xor eax, eax / pop r15 / pop r14 / ret
+    skip5 = bytes.fromhex('b801000000' '415f' '415e' 'c3')  # mov eax, 1 / ...
+    ctypes.memmove(mem5, pre5 + body5 + fall5 + skip5, len(pre5) + len(body5) + len(fall5) + len(skip5))
+    skip_at = mem5 + len(pre5) + len(body5) + len(fall5)
+    run5 = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(mem5)
+    ent_a, ent_b = (ctypes.c_ubyte * 0x400)(), (ctypes.c_ubyte * 0x400)()
+    AL1, AL2 = 0x7100000, 0x7200000
+    UA, UB, UC = 0x7001000, 0x7002000, 0x7003000
+
+    def ghost(listed, ua=UA, ub=UB, aa=AL1, ab=AL1, count=None, to=None):
+        ctypes.memset(tbl, 0, TABLE_SIZE + 0x40)
+        for i, u in enumerate(listed):
+            struct.pack_into('<Q', table, GHOST_LIST + 8 * i, u)
+        struct.pack_into('<I', table, GHOSTS, len(listed) if count is None else count)
+        struct.pack_into('<Q', table, GHOST_TO, skip_at if to is None else to)
+        for ent, u, al in ((ent_a, ua, aa), (ent_b, ub, ab)):
+            ctypes.memset(ctypes.addressof(ent), 0x5a, 0x400)
+            struct.pack_into('<Q', ent, ALLIANCE, al)
+            struct.pack_into('<Q', ent, ENTITY_UNIT, u)
+        before = bytes(ent_a) + bytes(ent_b)
+        got = run5(ctypes.addressof(ent_a), ctypes.addressof(ent_b))
+        assert bytes(ent_a) + bytes(ent_b) == before, 'the cave writes nothing of the entities'
+        assert bytes(table[TABLE_SIZE:]) == bytes(0x40)
+        assert bytes(table[GHOST_LIST:GHOST_LIST + 8 * GHOST_MAX]) == b''.join(struct.pack('<Q', u) for u in listed) + bytes(8 * (GHOST_MAX - len(listed))), 'the list is only read'
+        return got, struct.unpack_from('<I', table, GHOST_SKIPS)[0]
+
+    assert ghost([UA]) == (1, 1)  # friends, different units, A is a ghost: skipped, counted
+    assert ghost([UB]) == (1, 1)  # B is a ghost
+    assert ghost([UC, UA, UB]) == (1, 1)  # both listed (and another): once
+    assert ghost([UC]) == (0, 0)  # neither listed: the replaced instructions run
+    assert ghost([UA], ab=AL2) == (0, 0)  # enemies: as ever, even with a ghost in the pair
+    assert ghost([UA], ub=UA) == (0, 0)  # the same unit (a ghost unit's own models): as ever
+    assert ghost([]) == (0, 0)  # the list is empty
+    assert ghost([UA], count=0) == (0, 0)  # count 0 with a stale list (the script switched it off): nothing
+    assert ghost([UA], ua=0, ub=UA) == (0, 0)  # an entity without a unit
+    assert ghost([UA], ub=0) == (0, 0)
+    assert ghost([0], ua=0, ub=UB) == (0, 0)  # a 0 in the list never matches a missing unit
+    one_more = [0x7010000 + 0x1000 * i for i in range(GHOST_MAX - 1)] + [UB]
+    assert ghost(one_more) == (1, 1)  # the last (32nd) place of the list is read
+    assert ghost(one_more, count=GHOST_MAX - 1) == (0, 0)  # beyond the count: not looked at
+    assert ghost([UA], count=GHOST_MAX + 1) == (0, 0)  # a count the cave does not know: nothing
+    checks += 14
     print('native test: %d checks passed' % checks)
 
 
-def lua_script(x, sigs, release=False):
+def lua_script(x, sigs, release=False, narrow_off=False):
     lua = open(os.path.join(HERE, 'lanes.lua.tpl'), encoding='utf8').read()
+    if narrow_off:  # 085h: the comparison build, narrowing off (big walkers take the ordinary lanes / columns path); never a release
+        assert not release, '--narrow-off is a test build only'
+        assert lua.count('\tNARROW = true,') == 1, 'TUNE.NARROW = true is not in the template exactly once'
+        lua = lua.replace('\tNARROW = true,', '\tNARROW = false,')
     for (name, rva, tail, leave, kind), sig in zip(SITES, sigs):
         assert sites.expect_bytes(x, rva) == sig, name
     values = {
         'VERSION': VERSION, 'FIND_SITE': sites.lua_find_site(),
         'RELEASE': 'true' if release else 'false', 'PACK': RELEASE_PACK if release else PACK,
         'BUILD_KIND': 'release build' if release else 'TEST build',
-        'BUILD_NOTE': '' if release else ' TEST BUILD',
+        'BUILD_NOTE': '' if release else (' TEST BUILD NARROW OFF' if narrow_off else ' TEST BUILD'),
         'SITES': ',\n'.join('\t' + sites.lua_site(x, name, tail=tail) for name, rva, tail, leave, kind in SITES),
         'STATION_FN': sites.lua_site(x, 'set_station'),
         'HEAD': probe.lua_bytes(HEAD), 'TABLE_SIZE': TABLE_SIZE, 'ENABLE': ENABLE, 'COUNT': COUNT, 'LIST': LIST, 'ENTRY': ENTRY,
@@ -854,7 +1074,17 @@ def lua_script(x, sigs, release=False):
         'E_WT1': E_WT1, 'E_WC': E_WC, 'E_WKL': E_WKL, 'E_WKH': E_WKH, 'E_WSL': E_WSL, 'E_WSH': E_WSH, 'E_G': E_G, 'E_S0': E_S0, 'E_WLAG': E_WLAG, 'E_WMIN': E_WMIN,
         'EXPENDABLE': '{ ' + ', '.join("['%s'] = true" % k for k in expendable_units()) + ' }',
         'KINDS': unitkinds.lua_table(),
+        'FIRE_GUNS': unitkinds.lua_fire_guns(),
+        'ETHEREAL': unitkinds.lua_ethereal(),
+        'SKV_SITE': probe.skaven_cave.P_SITE, 'SKV_SITE_OFF': probe.skaven_cave.SITE_OFF, 'SKV_CAVE_A': probe.lua_bytes(probe.skaven_cave.CAVE_A),
+        'SKV_CAVE_B': probe.lua_bytes(probe.skaven_cave.CAVE_B), 'SKV_CAVE_C': probe.lua_bytes(probe.skaven_cave.CAVE_C),
+        'SKV_OFF_ENABLE': probe.skaven_cave.OFF_ENABLE, 'SKV_OFF_ALL': probe.skaven_cave.OFF_ALL, 'SKV_OFF_SHOOTERS': probe.skaven_cave.OFF_SHOOTERS,
+        'SKV_OFF_BLOCKERS': probe.skaven_cave.OFF_BLOCKERS, 'SKV_MAX_SHOOTERS': probe.skaven_cave.MAX_SHOOTERS, 'SKV_MAX_BLOCKERS': probe.skaven_cave.MAX_BLOCKERS,
+        'LEAD_NORM': unitkinds.lead_norm()[0], 'LEAD_ROUTE': sites.parse(sites.PATTERNS['is_routing'])[0], 'LEAD_ROUTE_AT': sites.parse(sites.PATTERNS['is_routing'])[1],
+        'LEAD_WAVER': sites.parse(sites.PATTERNS['is_wavering'])[0], 'LEAD_WAVER_AT': sites.parse(sites.PATTERNS['is_wavering'])[1],
         'P_UID': probe.skaven_cave.P_UID, 'UID_OFF': probe.skaven_cave.UID_OFF, 'WALKERS': WALKERS, 'JOBS_ANY': JOBS_ANY,
+        'PLACE_HIT': PLACE_HIT, 'PLACE_MISS': PLACE_MISS, 'E_PLACES': E_PLACES, 'E_NPLACES': E_NPLACES, 'PLACE_REC': PLACE_REC, 'PLACE_CAP': PLACE_CAP,
+        'GHOSTS': GHOSTS, 'GHOST_SKIPS': GHOST_SKIPS, 'GHOST_TO': GHOST_TO, 'GHOST_LIST': GHOST_LIST, 'GHOST_MAX': GHOST_MAX, 'GHOST_SKIP_OFF': GHOST_SKIP_OFF,
     }
     for key, value in values.items():
         assert ('--%s--' % key) in lua, key
@@ -864,12 +1094,43 @@ def lua_script(x, sigs, release=False):
     return lua.encode('utf8')
 
 
+def check_leadership(x):
+    """The morale block patterns match once each in the installed exe and S = B + 0x40; the leadership that counts as x1
+    comes from the tables (median of the vanilla units' base leadership)."""
+    found = []
+    for name in ('is_routing', 'is_wavering'):
+        pattern, mark = sites.parse(sites.PATTERNS[name])
+        hits = x.find(pattern, 3)
+        assert len(hits) == 1, '%s: %d matches in the installed exe, expected 1' % (name, len(hits))
+        found.append(int.from_bytes(x.read(hits[0] + mark, 4), 'little'))
+    assert found[1] == found[0] + 0x40, 'S is not B + 0x40'
+    guns = unitkinds.direct_fire_units()
+    print('line of fire: %d direct-fire guns: %s' % (len(guns), ', '.join(guns)))
+    median, count = unitkinds.lead_norm()
+    print('leadership: morale block B = 0x%x (unit + 0x%x = current leadership); x1 = %d (median base leadership of %d vanilla units)' % (found[0], found[0] + 0x48, median, count))
+    return found[0]
+
+
+def leadership_test():
+    """The median is computed from the rows it is given (not a fixed number), with the filters of the brief."""
+    def table(shift):
+        lands = [dict(key='l%d' % i, morale=m + shift if m else 0) for i, m in enumerate((40, 50, 60, 70, 80, 0, 200, 90, 999, 999, 999, 999, 999))]
+        rows = [dict(unit='u%d' % i, land_unit='l%d' % i, caste='melee_infantry', is_naval=False) for i in range(8)]
+        rows += [dict(unit='x_ror_u', land_unit='l8', caste='melee_infantry', is_naval=False), dict(unit='x_lord', land_unit='l9', caste='lord', is_naval=False),
+                 dict(unit='x_ship', land_unit='l10', caste='melee_infantry', is_naval=True), dict(unit='x_boss', land_unit='l11', caste='melee_infantry', is_naval=False),
+                 dict(unit='x_nolu', land_unit='missing', caste='melee_infantry', is_naval=False)]
+        return rows, lands
+    assert unitkinds.median_leadership(*table(0)) == (70, 7), unitkinds.median_leadership(*table(0))  # 40 50 60 70 80 90 200
+    assert unitkinds.median_leadership(*table(10)) == (80, 7)  # every number follows the table
+    return 2
+
+
 LISTING = os.path.join(HERE, 'caves_listing.asm')
 
 
 def cave_listing(x):
-    """The disassembly of the four caves, byte for byte as the battle script installs them."""
-    lines = ['; Military Drill %s - the machine code of the four code caves, byte for byte as the battle script installs them.' % VERSION,
+    """The disassembly of the five caves, byte for byte as the battle script installs them."""
+    lines = ['; Military Drill %s - the machine code of the five code caves, byte for byte as the battle script installs them.' % VERSION,
              '; Written by "python lanes.py listing"; every build and check fails when the caves no longer match this file.',
              '; Each cave starts with "movabs rax, <table>": the 8 zero bytes are the address of the mod\'s table, written in',
              '; when the cave is installed (memreader Plus code_cave(site, cave)). A cave ends by running off its last byte:',
@@ -902,9 +1163,12 @@ def main():
         print('written', LISTING)
         return
     check_listing(x)
+    check_leadership(x)
+    leadership_test()
+    print('leadership median test passed (computed from the rows it is given)')
     if len(sys.argv) > 2 and sys.argv[1] == 'build':
         release = '--release' in sys.argv[3:]
-        lua = lua_script(x, sigs, release)
+        lua = lua_script(x, sigs, release, '--narrow-off' in sys.argv[3:])
         out = sys.argv[2]
         mct = open(os.path.join(HERE, 'mct_settings.lua'), 'rb').read()
         pack, script, path = (RELEASE_PACK, RELEASE_SCRIPT, RELEASE_BATTLE_PATH) if release else (PACK, SCRIPT, BATTLE_PATH)

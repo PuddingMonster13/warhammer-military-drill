@@ -41,6 +41,13 @@ PATTERNS = {
     # (a target a few metres ahead on its way, built in the caller's stack frame at [rbp-0x31]; found with probe 7,
     # run 11: return 0x325b395 in build 25961564). Not a cave site: cave 4 at walk_to compares its return address.
     'carrot_ret': '''48 8D 55 CF  89 45 CB  E8 ?? ?? ?? ?? |  83 8B 98 00 00 00 01  4C 8D 9C 24 D0 00 00 00''',
+    # lanes cave 5 (0.85e): the per-entity collision pass 0x316ff04 calls the pair routine for each other entity B in the cells of A and, when it
+    # returns 1, the pair handler `call [B.vtable + 0xb8]` (sets the blocked byte). The mark is the `mov rax, [rdi+0x58]` that starts the call setup
+    # (r15 = A entity, r14 = B entity, both after the 0x200000 redirect); the `jne` after the pair routine skips the handler: its target
+    # (mark + 0x43, the end of the vcall) is where a pair is skipped to
+    'ghost_pass': '''4C 8B 75 D8 | 48 8B 47 58  4D 8B CF  4C 89 74 24 30  4D 8B C4  48 8B D3  48 8B 88 ?? ?? ?? ??
+        48 8B 45 E0  48 89 44 24 28  4C 89 6C 24 20  48 8B 49 ??  E8 ?? ?? ?? ??  3C 01  75 0F
+        49 8B 06  49 8B D7  49 8B CE  FF 90 ?? ?? ?? ??''',
     # probe 7 ------------------------------------------------------------------------------------------------------
     # "start move" (model slot 0x570): about 20 wrappers have the same bytes, so it is found through its only
     # direct caller, the override of a derived class that calls the base first
@@ -56,6 +63,12 @@ PATTERNS = {
     # the formation routine (entry) and one model in its loop (before `lea rdx, [rbp+0xa0] / mov rcx, r13 / call`)
     'formation': '''| 48 8B C4  88 50 10  55 53 56 57  41 54 41 55 41 56 41 57  48 8D A8 48 FE FF FF  48 81 EC 78 02 00 00
         8B 51 48  48 8B F9  48 8B 49 08  45 33 C0''',
+    # the morale block of the Unit object (leadership, run 48): the natives is_routing (`add rcx, B`) and is_wavering
+    # (`cmp dword [rcx+S], 5`); the mark is the 4-byte displacement itself, read at load (so these are `??` data, and
+    # the check S == B + 0x40 tells whether it is the analysed block). Current leadership = int at Unit* + B + 0x48.
+    'is_routing': '''48 85 C0 74 1F 48 8B 4F 08 48 81 C1 | ?? ?? ?? ??  E8 ?? ?? ?? ??  8A D0 48 8B CB  E8 ?? ?? ?? ??
+        B8 01 00 00 00 48 8B 5C 24 30''',
+    'is_wavering': '''48 85 C0 74 1B 48 8B 4F 08 83 B9 | ?? ?? ?? ??  05 48 8B C8 0F 94 C2  E8 ?? ?? ?? ??  B8 01 00 00 00''',
     'form_loop': '''4C 03 AD 90 00 00 00  48 8B 48 28  8B 47 5C  89 44 24 68  48 8B 1C D1 |
         48 8D 95 A0 00 00 00  49 8B CD  E8 ?? ?? ?? ??  4C 8D 4D A8  4C 8B C3  48 8D 55 80  48 8B CF''',
 }

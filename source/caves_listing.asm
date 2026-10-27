@@ -1,4 +1,4 @@
-; Military Drill 0.8 - the machine code of the four code caves, byte for byte as the battle script installs them.
+; Military Drill 0.85 - the machine code of the five code caves, byte for byte as the battle script installs them.
 ; Written by "python lanes.py listing"; every build and check fails when the caves no longer match this file.
 ; Each cave starts with "movabs rax, <table>": the 8 zero bytes are the address of the mod's table, written in
 ; when the cave is installed (memreader Plus code_cave(site, cave)). A cave ends by running off its last byte:
@@ -6,19 +6,19 @@
 ; from the start of the cave.
 ; Each place is found in Warhammer3.exe by the byte pattern of the same name in sites.py (it must match exactly once).
 
-; cave "place_send" (inside the game routine), 401 bytes
+; cave "place_send" (inside the game routine), 523 bytes
 0000  48 b8 00 00 00 00 00 00 00 00        movabs rax, 0
 000a  f0 ff 80 10 00 00 00                 lock inc dword ptr [rax + 0x10]
 0011  49 8b 8c 24 e8 02 00 00              mov rcx, qword ptr [r12 + 0x2e8]
 0019  48 85 c9                             test rcx, rcx
-001c  0f 84 6f 01 00 00                    je 0x191
+001c  0f 84 e9 01 00 00                    je 0x20b
 0022  4c 8d 90 80 00 00 00                 lea r10, [rax + 0x80]
 0029  4d 8b 1a                             mov r11, qword ptr [r10]
 002c  4d 85 db                             test r11, r11
-002f  0f 84 5c 01 00 00                    je 0x191
+002f  0f 84 d6 01 00 00                    je 0x20b
 0035  49 39 cb                             cmp r11, rcx
 0038  74 09                                je 0x43
-003a  49 81 c2 f8 00 00 00                 add r10, 0xf8
+003a  49 81 c2 08 01 00 00                 add r10, 0x108
 0041  eb e6                                jmp 0x29
 0043  41 0f 10 45 00                       movups xmm0, xmmword ptr [r13]
 0048  41 0f 11 82 60 00 00 00              movups xmmword ptr [r10 + 0x60], xmm0
@@ -32,58 +32,91 @@
 0078  41 89 8a 94 00 00 00                 mov dword ptr [r10 + 0x94], ecx
 007f  41 ff 82 98 00 00 00                 inc dword ptr [r10 + 0x98]
 0086  83 b8 00 00 00 00 00                 cmp dword ptr [rax], 0
-008d  0f 84 fe 00 00 00                    je 0x191
+008d  0f 84 78 01 00 00                    je 0x20b
 0093  f3 41 0f 10 62 1c                    movss xmm4, dword ptr [r10 + 0x1c]
 0099  0f 57 c0                             xorps xmm0, xmm0
 009c  0f 2e e0                             ucomiss xmm4, xmm0
-009f  0f 84 ec 00 00 00                    je 0x191
+009f  0f 84 66 01 00 00                    je 0x20b
 00a5  49 83 7d 18 00                       cmp qword ptr [r13 + 0x18], 0
-00aa  0f 85 da 00 00 00                    jne 0x18a
+00aa  0f 85 1a 01 00 00                    jne 0x1ca
 00b0  41 8b 4a 28                          mov ecx, dword ptr [r10 + 0x28]
 00b4  39 4c 24 28                          cmp dword ptr [rsp + 0x28], ecx
 00b8  76 04                                jbe 0xbe
 00ba  89 4c 24 28                          mov dword ptr [rsp + 0x28], ecx
-00be  f3 41 0f 10 4d 00                    movss xmm1, dword ptr [r13]
-00c4  f3 41 0f 5c 4a 08                    subss xmm1, dword ptr [r10 + 8]
-00ca  f3 41 0f 10 55 08                    movss xmm2, dword ptr [r13 + 8]
-00d0  f3 41 0f 5c 52 0c                    subss xmm2, dword ptr [r10 + 0xc]
-00d6  f3 41 0f 59 4a 10                    mulss xmm1, dword ptr [r10 + 0x10]
-00dc  f3 41 0f 59 52 14                    mulss xmm2, dword ptr [r10 + 0x14]
-00e2  f3 0f 58 ca                          addss xmm1, xmm2
-00e6  0f 28 c1                             movaps xmm0, xmm1
-00e9  f3 41 0f 5c 82 ec 00 00 00           subss xmm0, dword ptr [r10 + 0xec]
-00f2  f3 41 0f 59 82 e8 00 00 00           mulss xmm0, dword ptr [r10 + 0xe8]
-00fb  f3 41 0f 5e 4a 18                    divss xmm1, dword ptr [r10 + 0x18]
-0101  f3 0f 2d c9                          cvtss2si ecx, xmm1
-0105  81 f9 00 00 00 80                    cmp ecx, 0x80000000
-010b  0f 84 80 00 00 00                    je 0x191
-0111  45 8b 5a 20                          mov r11d, dword ptr [r10 + 0x20]
-0115  44 39 d9                             cmp ecx, r11d
-0118  41 0f 4f cb                          cmovg ecx, r11d
-011c  41 f7 db                             neg r11d
-011f  44 39 d9                             cmp ecx, r11d
-0122  41 0f 4c cb                          cmovl ecx, r11d
-0126  f3 0f 2a c9                          cvtsi2ss xmm1, ecx
-012a  f3 41 0f 58 4a 2c                    addss xmm1, dword ptr [r10 + 0x2c]
-0130  f3 0f 59 cc                          mulss xmm1, xmm4
-0134  f3 0f 58 c8                          addss xmm1, xmm0
-0138  41 0f 10 45 00                       movups xmm0, xmmword ptr [r13]
-013d  41 0f 11 42 30                       movups xmmword ptr [r10 + 0x30], xmm0
-0142  41 0f 10 45 10                       movups xmm0, xmmword ptr [r13 + 0x10]
-0147  41 0f 11 42 40                       movups xmmword ptr [r10 + 0x40], xmm0
-014c  41 0f 10 45 20                       movups xmm0, xmmword ptr [r13 + 0x20]
-0151  41 0f 11 42 50                       movups xmmword ptr [r10 + 0x50], xmm0
-0156  4d 8d 6a 30                          lea r13, [r10 + 0x30]
-015a  0f 28 d1                             movaps xmm2, xmm1
-015d  f3 41 0f 59 52 10                    mulss xmm2, dword ptr [r10 + 0x10]
-0163  f3 41 0f 58 55 00                    addss xmm2, dword ptr [r13]
-0169  f3 41 0f 11 55 00                    movss dword ptr [r13], xmm2
-016f  f3 41 0f 59 4a 14                    mulss xmm1, dword ptr [r10 + 0x14]
-0175  f3 41 0f 58 4d 08                    addss xmm1, dword ptr [r13 + 8]
-017b  f3 41 0f 11 4d 08                    movss dword ptr [r13 + 8], xmm1
-0181  f0 ff 80 08 00 00 00                 lock inc dword ptr [rax + 8]
-0188  eb 07                                jmp 0x191
-018a  f0 ff 80 18 00 00 00                 lock inc dword ptr [rax + 0x18]
+00be  31 d2                                xor edx, edx
+00c0  4d 8b 82 f8 00 00 00                 mov r8, qword ptr [r10 + 0xf8]
+00c7  4d 85 c0                             test r8, r8
+00ca  74 29                                je 0xf5
+00cc  41 8b 8a 00 01 00 00                 mov ecx, dword ptr [r10 + 0x100]
+00d3  85 c9                                test ecx, ecx
+00d5  74 1e                                je 0xf5
+00d7  81 f9 00 01 00 00                    cmp ecx, 0x100
+00dd  77 16                                ja 0xf5
+00df  4d 39 20                             cmp qword ptr [r8], r12
+00e2  74 0e                                je 0xf2
+00e4  49 83 c0 10                          add r8, 0x10
+00e8  ff c9                                dec ecx
+00ea  75 f3                                jne 0xdf
+00ec  f0 ff 40 78                          lock inc dword ptr [rax + 0x78]
+00f0  eb 03                                jmp 0xf5
+00f2  4c 89 c2                             mov rdx, r8
+00f5  48 85 d2                             test rdx, rdx
+00f8  0f 85 d5 00 00 00                    jne 0x1d3
+00fe  f3 41 0f 10 4d 00                    movss xmm1, dword ptr [r13]
+0104  f3 41 0f 5c 4a 08                    subss xmm1, dword ptr [r10 + 8]
+010a  f3 41 0f 10 55 08                    movss xmm2, dword ptr [r13 + 8]
+0110  f3 41 0f 5c 52 0c                    subss xmm2, dword ptr [r10 + 0xc]
+0116  f3 41 0f 59 4a 10                    mulss xmm1, dword ptr [r10 + 0x10]
+011c  f3 41 0f 59 52 14                    mulss xmm2, dword ptr [r10 + 0x14]
+0122  f3 0f 58 ca                          addss xmm1, xmm2
+0126  0f 28 c1                             movaps xmm0, xmm1
+0129  f3 41 0f 5c 82 ec 00 00 00           subss xmm0, dword ptr [r10 + 0xec]
+0132  f3 41 0f 59 82 e8 00 00 00           mulss xmm0, dword ptr [r10 + 0xe8]
+013b  f3 41 0f 5e 4a 18                    divss xmm1, dword ptr [r10 + 0x18]
+0141  f3 0f 2d c9                          cvtss2si ecx, xmm1
+0145  81 f9 00 00 00 80                    cmp ecx, 0x80000000
+014b  0f 84 ba 00 00 00                    je 0x20b
+0151  45 8b 5a 20                          mov r11d, dword ptr [r10 + 0x20]
+0155  44 39 d9                             cmp ecx, r11d
+0158  41 0f 4f cb                          cmovg ecx, r11d
+015c  41 f7 db                             neg r11d
+015f  44 39 d9                             cmp ecx, r11d
+0162  41 0f 4c cb                          cmovl ecx, r11d
+0166  f3 0f 2a c9                          cvtsi2ss xmm1, ecx
+016a  f3 41 0f 58 4a 2c                    addss xmm1, dword ptr [r10 + 0x2c]
+0170  f3 0f 59 cc                          mulss xmm1, xmm4
+0174  f3 0f 58 c8                          addss xmm1, xmm0
+0178  41 0f 10 45 00                       movups xmm0, xmmword ptr [r13]
+017d  41 0f 11 42 30                       movups xmmword ptr [r10 + 0x30], xmm0
+0182  41 0f 10 45 10                       movups xmm0, xmmword ptr [r13 + 0x10]
+0187  41 0f 11 42 40                       movups xmmword ptr [r10 + 0x40], xmm0
+018c  41 0f 10 45 20                       movups xmm0, xmmword ptr [r13 + 0x20]
+0191  41 0f 11 42 50                       movups xmmword ptr [r10 + 0x50], xmm0
+0196  4d 8d 6a 30                          lea r13, [r10 + 0x30]
+019a  0f 28 d1                             movaps xmm2, xmm1
+019d  f3 41 0f 59 52 10                    mulss xmm2, dword ptr [r10 + 0x10]
+01a3  f3 41 0f 58 55 00                    addss xmm2, dword ptr [r13]
+01a9  f3 41 0f 11 55 00                    movss dword ptr [r13], xmm2
+01af  f3 41 0f 59 4a 14                    mulss xmm1, dword ptr [r10 + 0x14]
+01b5  f3 41 0f 58 4d 08                    addss xmm1, dword ptr [r13 + 8]
+01bb  f3 41 0f 11 4d 08                    movss dword ptr [r13 + 8], xmm1
+01c1  f0 ff 80 08 00 00 00                 lock inc dword ptr [rax + 8]
+01c8  eb 41                                jmp 0x20b
+01ca  f0 ff 80 18 00 00 00                 lock inc dword ptr [rax + 0x18]
+01d1  eb 38                                jmp 0x20b
+01d3  41 0f 10 45 00                       movups xmm0, xmmword ptr [r13]
+01d8  41 0f 11 42 30                       movups xmmword ptr [r10 + 0x30], xmm0
+01dd  41 0f 10 45 10                       movups xmm0, xmmword ptr [r13 + 0x10]
+01e2  41 0f 11 42 40                       movups xmmword ptr [r10 + 0x40], xmm0
+01e7  41 0f 10 45 20                       movups xmm0, xmmword ptr [r13 + 0x20]
+01ec  41 0f 11 42 50                       movups xmmword ptr [r10 + 0x50], xmm0
+01f1  8b 4a 08                             mov ecx, dword ptr [rdx + 8]
+01f4  41 89 4a 30                          mov dword ptr [r10 + 0x30], ecx
+01f8  8b 4a 0c                             mov ecx, dword ptr [rdx + 0xc]
+01fb  41 89 4a 38                          mov dword ptr [r10 + 0x38], ecx
+01ff  4d 8d 6a 30                          lea r13, [r10 + 0x30]
+0203  f0 ff 40 74                          lock inc dword ptr [rax + 0x74]
+0207  f0 ff 40 08                          lock inc dword ptr [rax + 8]
 
 ; cave "recheck" (inside the game routine), 163 bytes
 0000  48 b8 00 00 00 00 00 00 00 00        movabs rax, 0
@@ -110,7 +143,7 @@
 006b  0f 84 32 00 00 00                    je 0xa3
 0071  49 39 cb                             cmp r11, rcx
 0074  74 09                                je 0x7f
-0076  49 81 c2 f8 00 00 00                 add r10, 0xf8
+0076  49 81 c2 08 01 00 00                 add r10, 0x108
 007d  eb e6                                jmp 0x65
 007f  41 83 7a 24 00                       cmp dword ptr [r10 + 0x24], 0
 0084  0f 84 19 00 00 00                    je 0xa3
@@ -133,7 +166,7 @@
 0041  0f 84 68 00 00 00                    je 0xaf
 0047  49 39 cb                             cmp r11, rcx
 004a  74 09                                je 0x55
-004c  49 81 c2 f8 00 00 00                 add r10, 0xf8
+004c  49 81 c2 08 01 00 00                 add r10, 0x108
 0053  eb e6                                jmp 0x3b
 0055  41 83 ba 9c 00 00 00 00              cmp dword ptr [r10 + 0x9c], 0
 005d  0f 84 4c 00 00 00                    je 0xaf
@@ -172,7 +205,7 @@
 0050  0f 84 d5 01 00 00                    je 0x22b
 0056  4d 39 1a                             cmp qword ptr [r10], r11
 0059  74 09                                je 0x64
-005b  49 81 c2 f8 00 00 00                 add r10, 0xf8
+005b  49 81 c2 08 01 00 00                 add r10, 0x108
 0062  eb e8                                jmp 0x4c
 0064  f0 ff 80 58 00 00 00                 lock inc dword ptr [rax + 0x58]
 006b  f3 41 0f 10 aa b0 00 00 00           movss xmm5, dword ptr [r10 + 0xb0]
@@ -254,3 +287,34 @@
 021a  f3 0f 58 52 08                       addss xmm2, dword ptr [rdx + 8]
 021f  f3 0f 11 52 08                       movss dword ptr [rdx + 8], xmm2
 0224  f0 ff 80 50 00 00 00                 lock inc dword ptr [rax + 0x50]
+
+; cave "ghost_pass" (inside the game routine), 113 bytes
+0000  48 b8 00 00 00 00 00 00 00 00        movabs rax, 0
+000a  8b 88 80 7d 00 00                    mov ecx, dword ptr [rax + 0x7d80]
+0010  85 c9                                test ecx, ecx
+0012  74 5d                                je 0x71
+0014  83 f9 20                             cmp ecx, 0x20
+0017  77 58                                ja 0x71
+0019  49 8b 97 80 00 00 00                 mov rdx, qword ptr [r15 + 0x80]
+0020  49 3b 96 80 00 00 00                 cmp rdx, qword ptr [r14 + 0x80]
+0027  75 48                                jne 0x71
+0029  49 8b 97 e8 02 00 00                 mov rdx, qword ptr [r15 + 0x2e8]
+0030  4d 8b 86 e8 02 00 00                 mov r8, qword ptr [r14 + 0x2e8]
+0037  48 85 d2                             test rdx, rdx
+003a  74 35                                je 0x71
+003c  4d 85 c0                             test r8, r8
+003f  74 30                                je 0x71
+0041  4c 39 c2                             cmp rdx, r8
+0044  74 2b                                je 0x71
+0046  4c 8d 88 a0 7d 00 00                 lea r9, [rax + 0x7da0]
+004d  4d 8b 11                             mov r10, qword ptr [r9]
+0050  49 39 d2                             cmp r10, rdx
+0053  74 0f                                je 0x64
+0055  4d 39 c2                             cmp r10, r8
+0058  74 0a                                je 0x64
+005a  49 83 c1 08                          add r9, 8
+005e  ff c9                                dec ecx
+0060  75 eb                                jne 0x4d
+0062  eb 0d                                jmp 0x71
+0064  f0 ff 80 88 7d 00 00                 lock inc dword ptr [rax + 0x7d88]
+006b  ff a0 90 7d 00 00                    jmp qword ptr [rax + 0x7d90]

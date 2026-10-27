@@ -19,7 +19,9 @@ BATTLE_PATH = 'script/battle/mod/' + SCRIPT
 def lua_script():
     lua = open(os.path.join(HERE, 'scenario.lua.tpl'), encoding='utf8').read()
     assert lua.count('--VERSION--') == 2 and lua.count('--KINDS--') == 1
-    return lua.replace('--VERSION--', str(VERSION)).replace('--KINDS--', unitkinds.lua_table()).encode('utf8')
+    assert lua.count('--ETHEREAL--') == 1 and lua.count('--SPEED--') == 1 and lua.count('--FIRE_GUNS--') == 1
+    lua = lua.replace('--VERSION--', str(VERSION)).replace('--KINDS--', unitkinds.lua_table())
+    return lua.replace('--ETHEREAL--', unitkinds.lua_ethereal()).replace('--SPEED--', unitkinds.lua_speeds()).replace('--FIRE_GUNS--', unitkinds.lua_fire_guns()).encode('utf8')
 
 
 def main():

@@ -35,6 +35,11 @@ wavering:set_default_value(true)
 wavering:set_text('Wavering units do not make way')
 wavering:set_tooltip_text('Units that are wavering (low leadership) stay where they are. Switched off, they make way at half speed. Routing units never make way.')
 
+local fire = mct_mod:add_new_option(MOD .. '_fire_lanes', 'checkbox')
+fire:set_default_value(true)
+fire:set_text('Clear the line of fire')
+fire:set_tooltip_text('A friendly unit that stands in the line of fire of a cannon, bolt thrower or other direct-fire gun opens a narrow lane for the shot, so the gun does not hold fire or shoot into its own men. Units that a walking unit needs always come first.')
+
 local logging = mct_mod:add_new_option(MOD .. '_logging', 'dropdown')
 logging:set_text('Logging')
 logging:set_tooltip_text('Lines in lua_mod_log.txt in the game folder, for a bug report or for your own changes to the mod.')
